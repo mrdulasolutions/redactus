@@ -116,7 +116,7 @@ $PY $SCRIPT verify statement_hostinger.pdf /tmp/plan.json
 
 ## What it asks to blank
 
-Recommended **yes** unless you have a reason: account number, routing, phone, email, SSN/ITIN, running balance, beginning balance, ending balance, period totals. Totals leak the hidden activity. A $12.99 Hostinger debit next to an ending balance of $7,225.45 is a tell.
+Recommended **yes** unless you have a reason: account number, routing, phone, email, SSN/ITIN, running balance, beginning balance, ending balance, period totals. Totals leak the hidden activity. A $12.99 Hostinger debit next to an ending balance of $37,225.45 is a tell.
 
 Asked with no default yes: bank name, bank address, account holder name, account holder address, statement period.
 

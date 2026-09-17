@@ -12,8 +12,8 @@ Recommended default is **blank** unless noted.
 | `routing_number` | ABA / routing | blank |
 | `bank_name` | Bank or credit union name | ask |
 | `bank_address` | Bank street / city / ZIP | ask |
-| `account_holder_name` | Customer name | ask |
-| `account_holder_address` | Customer street / city / ZIP | ask |
+| `account_holder_name` | Customer name | blank if the scan detected it (name tokens leak from header into verify) |
+| `account_holder_address` | Customer street / city / ZIP | blank if the scan detected an address block |
 | `phone` | Bank or customer phone | blank |
 | `email` | Email addresses | blank |
 | `member_number` | Member / CIF number | blank |

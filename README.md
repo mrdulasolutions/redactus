@@ -2,6 +2,7 @@
 
 **Keep-search redaction for bank-statement PDFs.** You name what stays visible. Everything else is burned out of the file.
 
+[![PyPI](https://img.shields.io/pypi/v/redactus.svg)](https://pypi.org/project/redactus/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-0f172a.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB.svg)](https://www.python.org)
 [![Engine: PyMuPDF](https://img.shields.io/badge/engine-PyMuPDF-b91c1c.svg)](https://pymupdf.readthedocs.io)
@@ -12,7 +13,7 @@ A landlord, auditor, or reimbursement packet does not need your grocery run, you
 This is **true redaction**. Text is removed from the PDF content stream. A black rectangle painted on top is not redaction. Blur is not redaction. If you can copy-paste it, it is still there.
 
 <p align="center">
-  <img src="docs/hero.png" alt="Redacted USAA-style statement: Hostinger rows visible, other transactions and account number blacked out" width="720">
+  <img src="https://raw.githubusercontent.com/mrdulasolutions/redactus/main/docs/hero.png" alt="Redacted USAA-style statement: Hostinger rows visible, other transactions and account number blacked out" width="720">
 </p>
 
 *Synthetic layout. Real statements never ship in this repo.*
@@ -23,21 +24,21 @@ This is **true redaction**. Text is removed from the PDF content stream. A black
 
 ```mermaid
 flowchart LR
-  A[PDF] --> B[Extract rows]
+  A[PDF] --> B[Scan / map layout]
   B --> C[Find keep terms]
   C --> D[Ask PII checklist]
   D --> E[Add or remove items]
-  E --> F[Preview boxes]
-  F --> G[Burn with PyMuPDF]
-  G --> H[Verify]
+  E --> F[One-shot from map]
+  F --> G[Verify]
 ```
 
-1. **Keep-search.** `Hostinger` matches `hostinger.com`, `HOSTINGER *DOMAINS`, and USAA `RECURRING DEB CARD PURCH` continuations.
-2. **Kept rows** retain date, description, and the debit or credit. Running balance is blank by default.
-3. **Every other transaction** is boxed as a whole row, including merchant continuations (`SHEETZ … WAKE FOREST NC`).
-4. **Standard fields are a checklist**, not a surprise: account number, routing, bank name/address, holder name/address, phone, email, member number, statement period, beginning/ending balance, period totals.
-5. **Add or remove at any time.** Another merchant, one match index, extra text on a kept row (`Larnaka`), or “leave the bank name.” Re-plan is ~0.3s. You are not stuck with the first pass.
-6. **Verify fail-closed.** Kept terms must still extract. Distinctive tokens from blanked rows must not.
+1. **Scan first.** Each statement is mapped before anything burns: header, columns, date style, split-amount quirks, continuation merchants, masked fields. `ready: yes` is the gate.
+2. **Keep-search.** `Hostinger` matches `hostinger.com`, `HOSTINGER *DOMAINS`, and USAA `RECURRING DEB CARD PURCH` continuations.
+3. **Kept rows** retain date, description, and the debit or credit. Running balance is blank by default.
+4. **Every other transaction** is boxed as a whole row, including merchant continuations (`SHEETZ … WAKE FOREST NC`).
+5. **Standard fields are a checklist**, not a surprise: account number, routing, bank name/address, holder name/address, phone, email, member number, statement period, beginning/ending balance, period totals. The map tells you which of those this PDF actually has.
+6. **Add or remove at any time.** Another merchant, one match index, extra text on a kept row (`Larnaka`), or “leave the bank name.” Re-plan is ~0.3s. You are not stuck with the first pass.
+7. **Verify fail-closed.** Kept terms must still extract. Distinctive tokens from blanked rows must not.
 
 Engine: **PyMuPDF** (`add_redact_annot` + `apply_redactions`). There is no JEV CLI in this tree. Overlay-only tools are out of scope.
 
@@ -45,37 +46,43 @@ Engine: **PyMuPDF** (`add_redact_annot` + `apply_redactions`). There is no JEV C
 
 ## Install
 
-Python 3.12 and a virtualenv. PyMuPDF has wheels; no system PDF toolkit required.
+Python 3.12 or newer. PyMuPDF has wheels; no system PDF toolkit required.
+
+```bash
+pipx install redactus
+# or
+pip install redactus
+```
+
+From a clone (development):
 
 ```bash
 git clone https://github.com/mrdulasolutions/redactus.git
 cd redactus
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -r .cursor/skills/bank-statement-redact/scripts/requirements.txt
+pip install -e .
 ```
 
-Cursor users: the Agent skill lives at `.cursor/skills/bank-statement-redact/`. Open this repo in Cursor and ask to redact a statement. The skill drives the same CLI.
+Cursor users: the Agent skill at `.cursor/skills/bank-statement-redact/` drives the same `redactus` command.
 
 ---
 
 ## Quick start
 
 ```bash
-PY=.venv/bin/python
-SCRIPT=.cursor/skills/bank-statement-redact/scripts/redact_statement.py
+# Map this statement first (header, columns, quirks, masked fields)
+redactus scan statement.pdf --keep Hostinger --workdir /tmp/redactus -o /tmp/redactus/map.json
 
-# See what would stay
-$PY $SCRIPT extract statement.pdf -o /tmp/extract.json
-$PY $SCRIPT find /tmp/extract.json --keep Hostinger
-
-# Burn a copy. Original is never overwritten.
-$PY $SCRIPT redact statement.pdf \
+# Burn a copy from that map. Original is never overwritten.
+redactus redact statement.pdf --map /tmp/redactus/map.json \
   --keep Hostinger \
   --redact-pii account_number,routing_number,running_balance,beginning_balance,ending_balance,period_totals,phone \
   -o statement_hostinger.pdf \
   --workdir /tmp/redactus
 ```
+
+`python -m redactus` is the same CLI.
 
 `find` prints **indexes**. Use those when you want one hit gone and the rest kept.
 
@@ -100,16 +107,16 @@ Extract once. Re-plan as the list changes.
 | Keep running balance | `--keep-running-balance` |
 
 ```bash
-$PY $SCRIPT plan /tmp/extract.json \
+redactus plan /tmp/extract.json \
   --keep Hostinger --keep Apple \
   --unkeep-index 79 \
   --also-redact Larnaka \
   --redact-pii account_number,routing_number,running_balance,beginning_balance,ending_balance,period_totals \
   -o /tmp/plan.json
 
-$PY $SCRIPT preview statement.pdf /tmp/plan.json -o /tmp/preview
-$PY $SCRIPT apply statement.pdf /tmp/plan.json -o statement_hostinger.pdf --engine pymupdf
-$PY $SCRIPT verify statement_hostinger.pdf /tmp/plan.json
+redactus preview statement.pdf /tmp/plan.json -o /tmp/preview
+redactus apply statement.pdf /tmp/plan.json -o statement_hostinger.pdf --engine pymupdf
+redactus verify statement_hostinger.pdf /tmp/plan.json
 ```
 
 ---
@@ -130,6 +137,7 @@ Timed on a 14-page USAA Classic Checking PDF (~177 transactions, 7 keep hits), l
 
 | Step | Wall time |
 | --- | --- |
+| scan / map | 0.2–0.5 s |
 | extract | 0.2–0.4 s |
 | find | ~0.1 s |
 | plan | ~0.1 s |
@@ -151,8 +159,9 @@ Chase / BofA-style single-line tables with `Date Description Debit Credit Balanc
 A synthetic statement is built in:
 
 ```bash
-$PY $SCRIPT sample -o /tmp/sample.pdf
-$PY $SCRIPT redact /tmp/sample.pdf --keep Hostinger \
+redactus sample -o /tmp/sample.pdf
+redactus scan /tmp/sample.pdf --keep Hostinger --workdir /tmp/sample-work -o /tmp/sample-work/map.json
+redactus redact /tmp/sample.pdf --map /tmp/sample-work/map.json --keep Hostinger \
   --redact-pii account_number,routing_number,running_balance,beginning_balance,ending_balance,period_totals \
   -o /tmp/sample_redacted.pdf --workdir /tmp/sample-work
 ```
@@ -174,12 +183,12 @@ This is a local tool for documents **you own**. It is not legal advice and it is
 ## Repository layout
 
 ```
+src/redactus/              # packaged CLI (`redactus`, `python -m redactus`)
+  cli.py                   # scan / extract / find / plan / apply / verify / redact
+pyproject.toml
 .cursor/skills/bank-statement-redact/
-  SKILL.md                 # Cursor Agent playbook
-  pii-fields.md            # Checklist copy and field ids
-  scripts/
-    redact_statement.py    # extract / find / plan / apply / verify / redact
-    requirements.txt       # pymupdf>=1.24
+  SKILL.md                 # Cursor Agent playbook (same CLI)
+  pii-fields.md
 LICENSE                    # MIT
 ```
 

@@ -1,15 +1,16 @@
 ---
 name: bank-statement-redact
 description: >-
-  Interactively redacts bank-statement PDFs by keep-search. Asks what to
-  find, keeps matching transaction date/description/debit/credit, blanks
-  every other transaction plus running balance, then asks about account
-  number, routing, bank info, addresses, and similar fields. The user can
-  add or remove keep terms, match indexes, PII fields, and extra strings
-  at any time and re-run. Use when the user wants to blur, blank, black
-  out, or redact a PDF bank statement, keep only certain merchants (for
-  example Hostinger), hide account and routing numbers, or revise a
-  previous redaction.
+  Interactively redacts bank-statement PDFs by keep-search. Always scans
+  the specific statement first (layout map: header, columns, date style,
+  quirks, masked PII) then one-shots from that map. Asks what to find,
+  keeps matching transaction date/description/debit/credit, blanks every
+  other transaction plus running balance, then asks about account number,
+  routing, bank info, and similar fields. The user can add or remove keep
+  terms, match indexes, PII fields, and extra strings at any time. Use
+  when the user wants to blur, blank, black out, or redact a PDF bank
+  statement, keep only certain merchants (for example Hostinger), or map
+  a USAA/Chase-style layout before burning.
 ---
 
 # Bank statement keep-search redaction
@@ -30,24 +31,31 @@ unwired stub; do not select it.
 - If find returns zero matches, stop. Do not redact.
 - If `scanned_pages` is non-empty, stop and say the page is image-only.
   OCR is out of band for this skill.
+- **Scan before one-shot.** A new PDF is mapped first (`scan` writes
+  `map.json`). Do not burn until `ready: yes`. This is the USAA-style
+  layout pass: header, columns, date style, split-amount quirks,
+  continuation merchants, masked fields.
 - Treat the keep list, PII list, and extra blanks as **editable**. If the
   user adds or removes an item after preview or after a first PDF, update
   the flags and re-plan. Do not tell them they are stuck with the first pass.
 
-## Script
+## CLI
 
 ```bash
 SKILL=".cursor/skills/bank-statement-redact"
+REPO="$(cd "$SKILL/../../.." && pwd)"
 PY="$SKILL/scripts/.venv/bin/python"
-SCRIPT="$SKILL/scripts/redact_statement.py"
+CLI="$PY -m redactus"
 
 if [ ! -x "$PY" ]; then
   python3.12 -m venv "$SKILL/scripts/.venv"
-  "$SKILL/scripts/.venv/bin/pip" install -r "$SKILL/scripts/requirements.txt"
 fi
+"$PY" -c "import redactus" 2>/dev/null || "$PY" -m pip install -e "$REPO"
 ```
 
-Prefer `python3.12` (PyMuPDF wheels). Commands below assume `$PY` and `$SCRIPT`.
+Prefer `python3.12` (PyMuPDF wheels). Commands below assume `$CLI`
+(`python -m redactus`). If the repo venv is already on PATH, `redactus`
+is the same command.
 
 ## Workflow
 
@@ -55,12 +63,12 @@ Copy and track:
 
 ```
 - [ ] 1. Locate the PDF
-- [ ] 2. Ask what to search for (keep terms)
-- [ ] 3. extract + find; show matches with indexes
-- [ ] 4. Ask the standard field checklist
-- [ ] 5. Offer add/remove (keep, indexes, fields, extra text)
-- [ ] 6. plan + preview; confirm boxes
-- [ ] 7. apply + verify
+- [ ] 2. Scan / map this statement (required)
+- [ ] 3. Ask what to search for (keep terms), unless already given
+- [ ] 4. find on the scan extract; show matches with indexes
+- [ ] 5. Ask the checklist using fields the map actually found
+- [ ] 6. Offer add/remove
+- [ ] 7. One-shot redact --map (or plan + preview + apply)
 - [ ] 8. If they revise, re-plan from the same extract.json
 - [ ] 9. Hand back the redacted PDF path
 ```
@@ -69,7 +77,27 @@ Copy and track:
 
 Use the file the user attached or named. If several statements, ask which.
 
-### 2. Ask what to search for
+### 2. Scan this statement
+
+Do this **before** burning, on every new PDF. Same mapping pass we used
+on USAA: learn the table, do not guess.
+
+```bash
+$CLI scan "$PDF" --workdir "$WORK" -o "$WORK/map.json"
+# if they already named a keep term:
+$CLI scan "$PDF" --keep Hostinger --workdir "$WORK" -o "$WORK/map.json"
+```
+
+Show the user the map, not the raw extract: profile, header, columns,
+date style, quirks, transaction count, masked fields, sample rows.
+If they passed `--keep`, also show match indexes.
+
+Stop if `ready` is false or scan exits 2/4.
+
+Reuse `$WORK/extract.json` and `$WORK/map.json` for find / plan / redact.
+Do not re-scan unless the source PDF changed.
+
+### 3. Ask what to search for
 
 If they have not said the keep term, ask:
 
@@ -84,11 +112,12 @@ Kept matching rows always include **date, description, debit or credit**.
 **Running balance on those rows is blanked** unless they pass
 `--keep-running-balance`.
 
-### 3. Extract and find
+### 4. Find on the scan extract
+
+Use the extract the scan already wrote. Do not re-extract.
 
 ```bash
-$PY $SCRIPT extract "$PDF" -o "$WORK/extract.json"
-$PY $SCRIPT find "$WORK/extract.json" --keep Hostinger --json
+$CLI find "$WORK/extract.json" --keep Hostinger --json
 ```
 
 Show the user only: **index**, page, date, description, debit/credit of
@@ -96,24 +125,29 @@ matches, plus a count of non-matching rows that will be blanked.
 
 If match_count is 0, ask for another term. Do not continue.
 
-### 4. Standard field checklist
+### 5. Standard field checklist
 
-Ask once, as a list. Recommended defaults are in
-[pii-fields.md](pii-fields.md). Do not skip this step.
+Ask once, as a list. Prefer the fields this map actually found
+(`detected_fields` / `ask_pii` / `recommended_redact_pii` in map.json).
+Fall back to [pii-fields.md](pii-fields.md) for anything the map missed.
+Do not skip this step.
 
 Always recommend **yes** for: account number, routing number, running
 balance, beginning balance, ending balance, period totals. Those totals
-would otherwise leak the redacted activity.
+would otherwise leak the redacted activity. If the map detected
+`account_holder_name` or an address block, recommend those too: city and
+name tokens from blanked rows otherwise survive in the header and fail
+verify.
 
-Also ask (no default yes unless [pii-fields.md](pii-fields.md) says so):
-bank name, bank address, account holder name, account holder address,
-phone, email, member number, statement period.
+Also ask (no default yes unless the map or [pii-fields.md](pii-fields.md)
+says so): bank name, bank address, account holder name, account holder
+address, phone, email, member number, statement period.
 
 Pass confirmed fields as a comma list:
 
 `--redact-pii account_number,routing_number,running_balance,beginning_balance,ending_balance,period_totals`
 
-### 5. Add or remove items
+### 6. Add or remove items
 
 After matches and the checklist, and again after preview or a finished
 PDF, ask:
@@ -139,7 +173,7 @@ re-plan. Removing an item means omitting it, not passing a negate flag
 except `--unkeep-index` and `--keep-running-balance`.
 
 ```bash
-$PY $SCRIPT plan "$WORK/extract.json" \
+$CLI plan "$WORK/extract.json" \
   --keep Hostinger --keep Cursor \
   --unkeep-index 84 \
   --also-redact Larnaka \
@@ -148,34 +182,33 @@ $PY $SCRIPT plan "$WORK/extract.json" \
   -o "$WORK/plan.json"
 ```
 
-### 6. Plan and preview
+### 7. One-shot from the map
+
+After the user has confirmed terms and fields, burn from the map. That
+reuses the extract and will not re-guess the layout.
 
 ```bash
-$PY $SCRIPT preview "$PDF" "$WORK/plan.json" -o "$WORK/preview"
-```
-
-Read the preview PNGs. Confirm kept rows still show date/description/amount
-and that other rows are boxed.
-
-### 7. Apply and verify
-
-```bash
-$PY $SCRIPT apply "$PDF" "$WORK/plan.json" -o "$OUT" --fill black --engine pymupdf
-$PY $SCRIPT verify "$OUT" "$WORK/plan.json"
-```
-
-`verify` must exit 0. If it fails, do not deliver the file. Inspect
-`missing_kept_terms` / `leaked_tokens` and fix the plan.
-
-After the user has confirmed terms and fields, this one-shot is allowed:
-
-```bash
-$PY $SCRIPT redact "$PDF" --keep Hostinger \
+$CLI redact "$PDF" --map "$WORK/map.json" --keep Hostinger \
   --unkeep-index 84 \
   --also-redact Larnaka \
   --redact-pii account_number,routing_number,running_balance,beginning_balance,ending_balance,period_totals \
   -o "$OUT" --workdir "$WORK"
 ```
+
+If they want to see boxes first:
+
+```bash
+$CLI plan "$WORK/extract.json" \
+  --keep Hostinger \
+  --redact-pii account_number,routing_number,running_balance,beginning_balance,ending_balance,period_totals \
+  -o "$WORK/plan.json"
+$CLI preview "$PDF" "$WORK/plan.json" -o "$WORK/preview"
+$CLI apply "$PDF" "$WORK/plan.json" -o "$OUT" --fill black --engine pymupdf
+$CLI verify "$OUT" "$WORK/plan.json"
+```
+
+`verify` must exit 0. If it fails, do not deliver the file. Inspect
+`missing_kept_terms` / `leaked_tokens` and fix the plan.
 
 ### 8. Deliver
 
@@ -200,6 +233,7 @@ Timed on the 14-page USAA statement (~177 transactions, 7 keep hits):
 
 | Step | Wall time |
 |---|---|
+| scan / map | ~0.2–0.5 s |
 | extract | ~0.2–0.4 s |
 | find | ~0.1 s |
 | plan | ~0.1 s |
@@ -218,21 +252,22 @@ the date line, dates are `MM/DD`, and the merchant (`hostinger.com`) is
 a continuation under `DEBIT CARD PURCHASE`. The script clusters by
 Y-midpoint so those still parse as one transaction.
 
-If find returns 0 on a text PDF, inspect `header_row` in extract.json.
+If find returns 0 on a text PDF, inspect `header_row` in map.json.
 It must look like `Date Description Debits Credits Balance`, not a
-credit-card banner.
+credit-card banner. Re-run `scan` if the source PDF changed.
 
 ## Example
 
 User: "Redact this statement so only Hostinger is visible."
 
-1. Ask nothing extra for the keep term; they already said Hostinger.
-2. Find hits (`HOSTINGER.COM`, `HOSTINGER *DOMAINS`) and show indexes.
-3. Ask the checklist.
-4. Offer add/remove.
-5. Blank other transactions, balances, and chosen PII.
-6. Hostinger rows keep date, description, and the debit; balance gone.
-7. If they then say "also keep Apple, and blank Larnaka", re-plan with
+1. Scan / map the PDF. Show profile, header, quirks, ready.
+2. Ask nothing extra for the keep term; they already said Hostinger.
+3. Find hits (`HOSTINGER.COM`, `HOSTINGER *DOMAINS`) and show indexes.
+4. Ask the checklist using fields the map found.
+5. Offer add/remove.
+6. One-shot `redact --map`. Blank other transactions, balances, chosen PII.
+7. Hostinger rows keep date, description, and the debit; balance gone.
+8. If they then say "also keep Apple, and blank Larnaka", re-plan with
    `--keep Hostinger --keep Apple --also-redact Larnaka`.
 
 ## Additional resources

@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "redactus"
+version = "0.1.0"
+description = "Keep-search redaction for bank-statement PDFs"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+authors = [{ name = "M.R. Dula" }]
+keywords = ["pdf", "redaction", "bank-statement", "privacy"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Office/Business :: Financial",
+]
+dependencies = [
+    "pymupdf>=1.24.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/mrdulasolutions/redactus"
+Repository = "https://github.com/mrdulasolutions/redactus"
+Issues = "https://github.com/mrdulasolutions/redactus/issues"
+Changelog = "https://github.com/mrdulasolutions/redactus/releases"
+
+[project.scripts]
+redactus = "redactus.cli:main"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/redactus",
+    "/LICENSE",
+    "/README.md",
+]
